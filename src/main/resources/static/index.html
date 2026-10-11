@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Student Management System</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 900px; margin: 30px auto; padding: 0 15px; background: #f4f6f8; }
+        h1 { text-align: center; }
+        .card { background: #fff; padding: 15px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 1px 4px rgba(0,0,0,.15); }
+        input { padding: 8px; margin: 4px; }
+        button { padding: 8px 14px; margin: 4px; cursor: pointer; border: none; border-radius: 4px; background: #2563eb; color: #fff; }
+        button:disabled { opacity: .4; cursor: not-allowed; }
+        button.red { background: #dc2626; }
+        button.gray { background: #6b7280; }
+        button.green { background: #16a34a; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 8px; border-bottom: 1px solid #ddd; text-align: left; }
+        th { background: #e5e7eb; }
+        #msg { padding: 8px; margin-bottom: 10px; border-radius: 4px; display: none; }
+        .ok { background: #dcfce7; color: #166534; }
+        .err { background: #fee2e2; color: #991b1b; }
+    </style>
+</head>
+<body>
+
+<h1>Student Management System</h1>
+<div id="msg"></div>
+
+<!-- Add / Edit form -->
+<div class="card">
+    <h3 id="formTitle">Add Student</h3>
+    <input type="hidden" id="studentId">
+    <input id="name" placeholder="Name">
+    <input id="email" placeholder="Email">
+    <input id="course" placeholder="Course">
+    <input id="age" type="number" placeholder="Age">
+    <br>
+    <button class="green" onclick="saveStudent()">Save</button>
+    <button class="gray" onclick="resetForm()">Clear</button>
+</div>
+
+<!-- Search -->
+<div class="card">
+    <h3>Search</h3>
+    <input id="searchName" placeholder="Search by name">
+    <input id="searchCourse" placeholder="Search by course">
+    <button onclick="searchStudents()">Search</button>
+    <button class="gray" onclick="clearSearch()">Reset</button>
+</div>
+
+<!-- Table + pagination -->
+<div class="card">
+    <table>
+        <thead>
+        <tr><th>ID</th><th>Name</th><th>Email</th><th>Course</th><th>Age</th><th>Actions</th></tr>
+        </thead>
+        <tbody id="tableBody"></tbody>
+    </table>
+    <p id="info"></p>
+    <button class="gray" id="prevBtn" onclick="changePage(-1)">Previous</button>
+    <button class="gray" id="nextBtn" onclick="changePage(1)">Next</button>
+</div>
+
+<script>
+    const API = "/api/students";
+    const PAGE_SIZE = 5;
+    let currentPage = 0;
+
+    function $(id) { return document.getElementById(id); }
+
+    function showMessage(text, ok) {
+        const box = $("msg");
+        box.textContent = text;
+        box.className = ok ? "ok" : "err";
+        box.style.display = "block";
+        setTimeout(() => { box.style.display = "none"; }, 4000);
+    }
+
+    // ---------- READ (GET) ----------
+    async function loadStudents() {
+        const name = encodeURIComponent($("searchName").value.trim());
+        const course = encodeURIComponent($("searchCourse").value.trim());
+        const url = `${API}?name=${name}&course=${course}&page=${currentPage}&size=${PAGE_SIZE}&sortBy=id&direction=asc`;
+        try {
+            const res = await fetch(url);
+            if (!res.ok) throw new Error("Server error " + res.status);
+            renderTable(await res.json());
+        } catch (e) {
+            showMessage("Cannot load students: " + e.message, false);
+        }
+    }
+
+    function renderTable(data) {
+        // शेवटच्या पानावरचा शेवटचा student delete झाला तर मागच्या पानावर जा
+        if (data.content.length === 0 && currentPage > 0) {
+            currentPage--;
+            loadStudents();
+            return;
+        }
+        const body = $("tableBody");
+        body.innerHTML = "";
+
+        data.content.forEach(s => {
+            const tr = document.createElement("tr");
+            [s.id, s.name, s.email, s.course, s.age].forEach(value => {
+                const td = document.createElement("td");
+                td.textContent = value;          // textContent = सुरक्षित (HTML चालत नाही)
+                tr.appendChild(td);
+            });
+
+            const actions = document.createElement("td");
+            const editBtn = document.createElement("button");
+            editBtn.textContent = "Edit";
+            editBtn.onclick = () => editStudent(s);
+            const delBtn = document.createElement("button");
+            delBtn.textContent = "Delete";
+            delBtn.className = "red";
+            delBtn.onclick = () => deleteStudent(s.id);
+            actions.append(editBtn, delBtn);
+
+            tr.appendChild(actions);
+            body.appendChild(tr);
+        });
+
+        $("info").textContent =
+            `Page ${data.page + 1} of ${Math.max(data.totalPages, 1)} | Total students: ${data.totalElements}`;
+        $("prevBtn").disabled = currentPage === 0;
+        $("nextBtn").disabled = data.last;
+    }
+
+    // ---------- CREATE (POST) / UPDATE (PUT) ----------
+    async function saveStudent() {
+        const id = $("studentId").value;
+        const student = {
+            name: $("name").value.trim(),
+            email: $("email").value.trim(),
+            course: $("course").value.trim(),
+            age: Number($("age").value)
+        };
+        const method = id ? "PUT" : "POST";
+        const url = id ? `${API}/${id}` : API;
+
+        try {
+            const res = await fetch(url, {
+                method: method,
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(student)
+            });
+            if (res.status === 400) {                       // validation errors
+                const errors = await res.json();
+                showMessage(Object.values(errors).join(" | "), false);
+                return;
+            }
+            if (!res.ok) throw new Error("Server error " + res.status);
+            showMessage(id ? "Student updated" : "Student added", true);
+            resetForm();
+            loadStudents();
+        } catch (e) {
+            showMessage("Cannot save: " + e.message, false);
+        }
+    }
+
+    // ---------- DELETE ----------
+    async function deleteStudent(id) {
+        if (!confirm("Delete student with id " + id + "?")) return;
+        try {
+            const res = await fetch(`${API}/${id}`, { method: "DELETE" });
+            if (!res.ok) throw new Error("Server error " + res.status);
+            showMessage("Student deleted", true);
+            loadStudents();
+        } catch (e) {
+            showMessage("Cannot delete: " + e.message, false);
+        }
+    }
+
+    // ---------- Form helpers ----------
+    function editStudent(s) {
+        $("studentId").value = s.id;
+        $("name").value = s.name;
+        $("email").value = s.email;
+        $("course").value = s.course;
+        $("age").value = s.age;
+        $("formTitle").textContent = "Edit Student (id " + s.id + ")";
+        window.scrollTo(0, 0);
+    }
+
+    function resetForm() {
+        ["studentId", "name", "email", "course", "age"].forEach(id => $(id).value = "");
+        $("formTitle").textContent = "Add Student";
+    }
+
+    // ---------- Search / pagination helpers ----------
+    function searchStudents() { currentPage = 0; loadStudents(); }
+    function clearSearch() {
+        $("searchName").value = "";
+        $("searchCourse").value = "";
+        currentPage = 0;
+        loadStudents();
+    }
+    function changePage(step) { currentPage += step; loadStudents(); }
+
+    // पान उघडताच students load करा
+    loadStudents();
+</script>
+</body>
+</html>
